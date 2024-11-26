@@ -19,6 +19,12 @@ resource "aws_sqs_queue" "sftp_event_queue" {
   name = "sftp_event_queue"
 }
 
+# EventBridge target to send events to SQS
+resource "aws_eventbridge_target" "sftp_event_target" {
+  rule = aws_eventbridge_rule.sftp_event_rule.name
+  arn  = aws_sqs_queue.sftp_event_queue.arn
+}
+
 # Lambda function to process SFTP events
 resource "aws_lambda_function" "sftp_event_processor" {
   filename         = var.lambda_zip_file
@@ -29,19 +35,10 @@ resource "aws_lambda_function" "sftp_event_processor" {
   source_code_hash = filebase64sha256(var.lambda_zip_file)
 }
 
-# Permission for EventBridge to invoke Lambda
-resource "aws_lambda_permission" "allow_eventbridge" {
-  statement_id  = "AllowExecutionFromEventBridge"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.sftp_event_processor.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_eventbridge_rule.sftp_event_rule.arn
-}
-
-# EventBridge target to send events to Lambda
-resource "aws_eventbridge_target" "sftp_event_target" {
-  rule = aws_eventbridge_rule.sftp_event_rule.name
-  arn  = aws_lambda_function.sftp_event_processor.arn
+# SQS trigger for Lambda
+resource "aws_lambda_event_source_mapping" "sqs_event_source" {
+  event_source_arn = aws_sqs_queue.sftp_event_queue.arn
+  function_name    = aws_lambda_function.sftp_event_processor.arn
 }
 
 # DynamoDB table to store SFTP transfer status
@@ -94,40 +91,4 @@ resource "aws_iam_role_policy" "lambda_exec_policy" {
       }
     ]
   })
-}
-modules/sftp_transfer/variables.tf
-variable "region" {
-  description = "AWS region"
-  type        = string
-}
-
-variable "lambda_zip_file" {
-  description = "Path to the Lambda zip file"
-  type        = string
-}
-modules/sftp_transfer/outputs.tf
-output "sqs_queue_url" {
-  value = aws_sqs_queue.sftp_event_queue.url
-}
-
-output "dynamodb_table_name" {
-  value = aws_dynamodb_table.sftp_status_table.name
-}
-Wywołanie modułu w main.tf
-provider "aws" {
-  region = "us-west-2"
-}
-
-module "sftp_transfer" {
-  source          = "./modules/sftp_transfer"
-  region          = "us-west-2"
-  lambda_zip_file = "lambda_function_payload.zip"
-}
-
-output "sqs_queue_url" {
-  value = module.sftp_transfer.sqs_queue_url
-}
-
-output "dynamodb_table_name" {
-  value = module.sftp_transfer.dynamodb_table_name
 }
